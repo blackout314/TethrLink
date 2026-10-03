@@ -1019,8 +1019,9 @@ class MainActivityV2 : AppCompatActivity() {
                 else R.drawable.bg_codec_unselected
             )
             button.setTextColor(
-                resources.getColor(
-                    if (selected) R.color.brand_light else R.color.text_hint, theme
+                ContextCompat.getColor(
+                    this,
+                    if (selected) R.color.brand_light else R.color.text_hint
                 )
             )
         }
