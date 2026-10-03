@@ -210,6 +210,8 @@ class StreamDecoder(
         try {
             val buf = codec.getInputBuffer(index) ?: return
             if (data.size > buf.capacity()) {
+                Log.w(TAG, "Dropping ${data.size} B access unit: exceeds input buffer " +
+                        "capacity ${buf.capacity()} B (picture will corrupt until next IDR)")
                 codec.queueInputBuffer(index, 0, 0, 0, 0)
                 return
             }
@@ -241,7 +243,12 @@ class StreamDecoder(
         }
     }
     private fun decodeJpeg(data: ByteArray) {
-        BitmapFactory.decodeByteArray(data, 0, data.size)?.let { onBitmap?.invoke(it) }
+        val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size)
+        if (bitmap == null) {
+            Log.w(TAG, "JPEG decode failed on ${data.size} B frame, skipped")
+            return
+        }
+        onBitmap?.invoke(bitmap)
     }
 
     fun release() {

@@ -31,6 +31,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.util.Base64
+import android.util.Log
 import org.json.JSONObject
 import com.tethrlink.input.GestureInterpreter
 import com.tethrlink.input.InputCodec
@@ -61,6 +62,8 @@ import java.net.Socket
  * ".MainActivityV2" (or swap with MainActivity there).
  */
 class MainActivityV2 : AppCompatActivity() {
+
+    private val TAG = "TethrLink"
 
     // ── Network constants ─────────────────────────────────────────────────────
     private val DEFAULT_SERVER_PORT   = 51137
@@ -578,6 +581,9 @@ class MainActivityV2 : AppCompatActivity() {
     private fun startStreaming(ip: String, port: Int, busyRetries: Int = 5) {
         listenJob?.cancel()
         streamJob = ioScope.launch {
+            // Size of the frame being read when the session ends, so a crash
+            // or disconnect caused by a bad length prefix is visible in logcat.
+            var lastFrameSize = 0
             try {
                 val socket = Socket()
                 socket.connect(InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS)
@@ -662,6 +668,8 @@ class MainActivityV2 : AppCompatActivity() {
                 val streamH   = input.readInt()
                 val codecId   = input.read()
                 val codecName = if (codecId == 1) "H.264" else "JPEG"
+                Log.i(TAG, "Streaming $codecName ${streamW}x${streamH} from $ip:$port " +
+                        "(input=${if (inputSupported) "on" else "off"})")
 
                 withContext(Dispatchers.Main) {
                     overlayServerName.text = discoveredName
@@ -749,6 +757,13 @@ class MainActivityV2 : AppCompatActivity() {
                         continue
                     }
                     if (frameSize <= 0) continue
+                    lastFrameSize = frameSize
+
+                    // Not a limit, only a warning: a length far beyond anything
+                    // a real frame needs almost always means the stream has
+                    // lost sync, and the allocation below is what will fail.
+                    if (frameSize > READ_BUF_SIZE * 16)
+                        Log.w(TAG, "Suspicious frame size $frameSize B from $ip:$port")
 
                     if (readBuf.size < frameSize) readBuf = ByteArray(frameSize)
                     input.readFully(readBuf, 0, frameSize)
@@ -763,7 +778,18 @@ class MainActivityV2 : AppCompatActivity() {
                 socket.close()
 
             } catch (e: Exception) {
-                // Ignore silent timeouts during recovery
+                // Expected endings (timeouts, resets, server busy): the
+                // reconnect path in finally handles them. Log the reason so a
+                // "stuck" report can be matched to what actually happened.
+                Log.w(TAG, "Stream from $ip:$port ended: ${e.javaClass.simpleName}: " +
+                        "${e.message} (last frame size=$lastFrameSize B)")
+            } catch (t: Throwable) {
+                // Errors (OutOfMemoryError, NoSuchMethodError, ...) are not
+                // handled here and will still take the process down; record
+                // why before they do, since the crash dialog never says.
+                Log.e(TAG, "Stream from $ip:$port crashed " +
+                        "(last frame size=$lastFrameSize B)", t)
+                throw t
             } finally {
                 // Tear down touch state with the connection: no button must be
                 // left "held" from this session, and no stale interpreter or
